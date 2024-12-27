@@ -1,0 +1,84 @@
+name: Release
+on:
+  workflow_call:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  should-release:
+    runs-on: ubuntu-latest
+    outputs:
+      should-release: ${{ steps.package.outputs.version != steps.swc.outputs.version }}
+      version: ${{ steps.swc.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+      - run: pnpm i
+      - name: Get current package version
+        id: package
+        run: |
+          echo "version=$(cat package.json | jq .version)" >> $GITHUB_OUTPUT
+      - name: Get current package version
+        id: swc
+        run: |
+          echo "version=$(pnpm list @swc/core --json | jq 'first.devDependencies["@swc/core"].version')" >> $GITHUB_OUTPUT
+
+  release:
+    needs: should-release
+    if: ${{ needs.should-release.outputs.should-release == 'true' }}
+    env:
+      CI: true
+      GITHUB_TOKEN: ${{ secrets.ACTION_GITHUB_TOKEN }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      RUST_LOG: debug
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need history for changelog generation
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo
+      - name: Config git user
+        run: |
+          git config --global user.name ${{ secrets.ACTION_GITHUB_USERNAME }};
+          git config --global user.email ${{ secrets.ACTION_GITHUB_EMAIL }};
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+      - run: pnpm i --frozen-lockfile
+      - name: Install cargo bump
+        run: cargo install cargo-bump
+      - name: Set cargo version
+        run: cargo bump ${{ needs.should-release.outputs.version }}
+      - name: Build plugin
+        run: cargo build --release --target wasm32-wasip1
+      - name: Stage cargo changes
+        run: git stage Cargo.toml Cargo.lock
+      - name: Registry auth
+        run: pnpm set "//registry.npmjs.org/:_authToken" ${{ env.NPM_TOKEN }}
+      - name: Perform release
+        run: pnpm run release --ci ${{ needs.should-release.outputs.version }}

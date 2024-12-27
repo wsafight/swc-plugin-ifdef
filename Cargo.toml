@@ -1,0 +1,25 @@
+[package]
+name = "swc_plugin_ifdef"
+version = "0.0.1"
+edition = "2021"
+authors = ["Alex Miller <codex.nz@gmail.com>"]
+description = "SWC plugin for handling the transformation of import.meta.env"
+license = "Apache-2.0"
+rust-version = "1.82"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+swc_core = { version = "9.0.2", features = [
+    "ecma_plugin_transform",
+    "trace_macro",
+] }
+tracing = { version = "0.1.41", features = ["release_max_level_info"] }
+
+[profile.release]
+codegen-units = 1
+# debug = true
+lto = true
+opt-level = "s"
+strip = "symbols"
